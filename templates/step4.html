@@ -1,0 +1,381 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+<div class="page-card wide">
+
+  <div class="page-card-header">
+    <h2>Risultati &amp; Metriche</h2>
+    <p class="page-card-sub">
+      Strategia: <strong>{{ strategy }} — {{ strategy_label }}</strong>
+      {% if strategy != 'P1' %} · Persona: <strong>{{ persona_label }}</strong>{% endif %}
+    </p>
+  </div>
+
+  {% if not has_api_key %}
+  <div class="error-box" style="margin:20px">
+    ⚠ Nessuna chiave API Groq trovata. Aggiungi <code>GROQ_API_KEY</code> al file <code>.env</code> nella cartella principale del progetto.
+  </div>
+  {% else %}
+
+  <div class="tabs-bar" id="tabs-bar">
+    {% for m in selected_models %}
+    <button class="tab-btn {% if loop.first %}active{% endif %}"
+            data-tab="{{ m.id }}" type="button">{{ m.label }}</button>
+    {% endfor %}
+  </div>
+
+  {% for m in selected_models %}
+  <div class="tab-panel {% if loop.first %}active{% endif %}" id="panel-{{ m.id | replace('/', '-') }}">
+
+    <div class="result-status" id="status-{{ m.id | replace('/', '-') }}">
+      <div class="spinner"></div> Generazione e calcolo metriche in corso…
+    </div>
+
+    <div class="card" id="card-output-{{ m.id | replace('/', '-') }}" style="display:none">
+      <div class="card-header">
+        <h3>Spiegazione Generata</h3>
+        <span class="badge badge-model">{{ m.label }}</span>
+        <span class="badge badge-strategy">{{ strategy }}</span>
+        <span class="ts" id="ts-{{ m.id | replace('/', '-') }}"></span>
+      </div>
+      <div class="card-body">
+        <div class="explanation-text-formatted" id="output-{{ m.id | replace('/', '-') }}"></div>
+      </div>
+    </div>
+
+    <div class="card" id="card-metrics-{{ m.id | replace('/', '-') }}" style="display:none">
+      <div class="card-header">
+        <h3>Metriche di Qualità</h3>
+        <span class="raw-time" id="raw-time-{{ m.id | replace('/', '-') }}"></span>
+      </div>
+      <div class="card-body">
+        <div class="metrics-grid" id="metrics-{{ m.id | replace('/', '-') }}"></div>
+      </div>
+    </div>
+
+    <div class="error-box" id="error-{{ m.id | replace('/', '-') }}" style="display:none;margin-top:16px"></div>
+
+  </div>
+  {% endfor %}
+
+  <div class="card" id="comparison-card" style="margin-top: 24px;">
+    <div class="card-header">
+      <h3>Profilo Metrico Comparativo</h3>
+      <span class="ts" id="compare-count"></span>
+    </div>
+
+    <div class="card-body">
+      <div class="chart-container" style="height: 480px; position:relative;">
+        <canvas id="comparison-radar" aria-label="Grafico radar combinato"></canvas>
+        <div id="radar-placeholder" style="
+          position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+          color:#8a94a6;font-size:14px;pointer-events:none;
+        ">In attesa dei risultati…</div>
+      </div>
+    </div>
+
+    <div class="radar-toggles" id="radar-toggles" style="padding: 0 20px 20px; display:flex; flex-wrap:wrap; justify-content:center; gap:8px;">
+      {% for m in selected_models %}
+      <button
+        type="button"
+        class="radar-toggle-btn active"
+        data-model-id="{{ m.id }}"
+        title="Includi/Escludi {{ m.label }} dal grafico"
+      >
+        <span class="rtb-dot" data-model-id="{{ m.id }}"></span>
+        {{ m.label }}
+        <span class="rtb-x">✕</span>
+      </button>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% endif %}
+
+  <div class="form-actions two-col" style="margin-top:0">
+    <a href="{{ url_for('step3') }}" class="btn-secondary">‹ Torna ai Modelli</a>
+    <a href="{{ url_for('step1') }}" class="btn-ghost">↺ Voglio riporvare</a>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+// STRUTTURE DATI GLOBALI RICEVUTE DA JINJA2 E DI CONFIGURAZIONE METRICHE
+const MODELS = {{ selected_models | tojson }};
+const METRIC_LABELS = ["Diversity", "Readability", "Coherence", "Coverage", "Time"];
+
+const METRIC_LABELS_IT = {
+  "Diversity": "Diversità",
+  "Readability": "Leggibilità",
+  "Coherence": "Coerenza",
+  "Coverage": "Copertura",
+  "Time": "Tempo"
+};
+
+// PALETTE CROMATICA DEI MODELLI PER DIFFEERENZIARE I DATASET NEL GRAFICO
+const MODEL_PALETTE = [
+  { stroke: "#2563eb", fill: "rgba(37, 99, 235, 0.15)"  },
+  { stroke: "#059669", fill: "rgba(5, 150, 105, 0.15)"  },
+  { stroke: "#d97706", fill: "rgba(217, 119, 6, 0.15)"  },
+  { stroke: "#a855f7", fill: "rgba(168, 85, 247, 0.15)" },
+  { stroke: "#dc2626", fill: "rgba(220, 38, 38, 0.15)"  },
+  { stroke: "#0ea5e9", fill: "rgba(14, 165, 233, 0.15)" },
+  { stroke: "#ec4899", fill: "rgba(236, 72, 153, 0.15)" },
+  { stroke: "#f59e0b", fill: "rgba(245, 158, 11, 0.15)" },
+  { stroke: "#10b981", fill: "rgba(16, 185, 129, 0.15)" },
+  { stroke: "#6366f1", fill: "rgba(99, 102, 241, 0.15)" },
+];
+
+const METRIC_COLORS = {
+  Diversity:   "#2563eb",
+  Readability: "#a855f7",
+  Coherence:   "#059669",
+  Coverage:    "#d97706",
+  Time:        "#dc2626",
+};
+
+// MAPPATURA INDICI COLORI PER MODELLO
+const MODEL_PALETTE_MAP = {};
+MODELS.forEach((m, i) => { MODEL_PALETTE_MAP[m.id] = i % MODEL_PALETTE.length; });
+
+
+
+// FUNZIONI UTILITY PER GESTIONE STRINGHE E FORMATTAZIONE OUTPUT LLM
+const safeId    = id => id.replace(/\//g, '-');
+const allResults = {};       
+const hiddenModels = new Set(); 
+let compareChart = null;
+
+function formatLlmOutput(text) {
+  if (!text) return "";
+  let formatted = text.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+  formatted = formatted.replace(/\n{3,}/g, "\n\n");
+  const paragraphs = formatted.split(/\n\n+/);
+  const htmlParagraphs = paragraphs.map(p => {
+    let trimmed = p.trim();
+    if (!trimmed) return "";
+    if (/^\d+[\.\)]/.test(trimmed)) {
+      return `<div class="list-item-clean" style="margin-bottom: 12px;">${trimmed}</div>`;
+    }
+    return `<p style="margin-bottom: 16px; line-height: 1.6;">${trimmed}</p>`;
+  });
+  return htmlParagraphs.join("");
+}
+
+
+
+// GESTIONE EVENTI CLICK SUI TAB DEI MODELLI
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + safeId(tab)).classList.add('active');
+  });
+});
+
+
+
+// GESTIONE EVENTI INTERFACCIA DEL RADAR COMPARATIVO
+function applyPaletteToBtn(btn) {
+  const mid = btn.dataset.modelId;
+  const palette = MODEL_PALETTE[MODEL_PALETTE_MAP[mid]];
+  const dot = btn.querySelector('.rtb-dot');
+  if (dot) dot.style.background = palette.stroke;
+  btn.style.borderColor = palette.stroke;
+  btn.style.color = palette.stroke;
+}
+
+document.querySelectorAll('.radar-toggle-btn').forEach(btn => {
+  applyPaletteToBtn(btn);
+  btn.addEventListener('click', () => {
+    const mid = btn.dataset.modelId;
+    if (hiddenModels.has(mid)) {
+      hiddenModels.delete(mid);
+      btn.classList.add('active');
+      btn.style.opacity = '1';
+    } else {
+      hiddenModels.add(mid);
+      btn.classList.remove('active');
+      btn.style.opacity = '0.4';
+    }
+    renderCompareRadar();
+  });
+});
+
+
+
+// RENDERING DINAMICO DELLA GRIGLIA METRICHE
+function renderMetrics(modelId, metrics) {
+  const sid  = safeId(modelId);
+  const grid = document.getElementById('metrics-' + sid);
+  if (!grid) return;
+  grid.innerHTML = '';
+
+
+
+  METRIC_LABELS.forEach(k => {
+    const val = metrics[k];
+    const col = METRIC_COLORS[k];
+    const labelIt = METRIC_LABELS_IT[k];
+    const div = document.createElement('div');
+    div.className = 'metric-card';
+    div.innerHTML = `
+      <div class="metric-name">${labelIt}</div>
+      <div class="metric-value" style="color:${col}">${val.toFixed(3)}</div>
+      ${k === 'Time' ? `<div class="metric-raw">${metrics.raw_time}s effettivi</div>` : ''}
+    `;
+    grid.appendChild(div);
+  });
+}
+
+
+
+// GENERAZIONE E AGGIORNAMENTO DEL GRAFICO RADAR (CHART.JS)
+function renderCompareRadar() {
+  const placeholder = document.getElementById('radar-placeholder');
+  const ids = Object.keys(allResults).filter(id => !hiddenModels.has(id));
+
+
+
+  if (ids.length === 0) {
+    if (placeholder) placeholder.style.display = 'flex';
+    if (compareChart) { compareChart.destroy(); compareChart = null; }
+    return;
+  }
+
+
+
+  if (placeholder) placeholder.style.display = 'none';
+
+
+
+  const countEl = document.getElementById('compare-count');
+  if (countEl) countEl.textContent = ids.length + ' modell' + (ids.length !== 1 ? 'i' : 'o');
+
+
+
+  const datasets = ids.map(id => {
+    const palette = MODEL_PALETTE[MODEL_PALETTE_MAP[id]];
+    const label   = MODELS.find(m => m.id === id)?.label || id;
+    return {
+      label: label,
+      data: METRIC_LABELS.map(k => allResults[id].metrics[k]),
+      fill: true,
+      backgroundColor: palette.fill,
+      borderColor: palette.stroke,
+      pointBackgroundColor: palette.stroke,
+      borderWidth: 2,
+      pointRadius: 3,
+    };
+  });
+
+
+
+  if (compareChart) compareChart.destroy();
+
+
+
+  const ctx = document.getElementById('comparison-radar').getContext('2d');
+  compareChart = new Chart(ctx, {
+    type: 'radar',
+    data: { 
+      labels: METRIC_LABELS.map(k => METRIC_LABELS_IT[k]), 
+      datasets 
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.formattedValue}` } }
+      },
+      scales: {
+        r: {
+          min: 0, max: 1,
+          ticks:       { stepSize: .2, color: '#8a94a6', backdropColor: 'transparent', font: { size: 10 } },
+          grid:        { color: '#dce3ec' },
+          angleLines:  { color: '#dce3ec' },
+          pointLabels: { color: '#4b5563', font: { size: 13, weight: '600' } }
+        }
+      }
+    }
+  });
+}
+
+
+
+// RICHIESTA INFERENZA ASINCRONA AL SERVER PER SINGOLO MODELLO
+async function generate(model) {
+  const sid      = safeId(model.id);
+  const statusEl = document.getElementById('status-' + sid);
+  if (statusEl) statusEl.style.display = 'flex';
+
+
+
+  try {
+    const resp = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model_id: model.id })
+    });
+    const data = await resp.json();
+
+
+
+    if (statusEl) statusEl.style.display = 'none';
+
+
+
+    if (data.error) {
+      const errEl = document.getElementById('error-' + sid);
+      if (errEl) { errEl.textContent = '⚠ ' + data.error; errEl.style.display = ''; }
+      return;
+    }
+
+
+
+    const outputEl = document.getElementById('output-' + sid);
+    const tsEl     = document.getElementById('ts-' + sid);
+    const rtEl     = document.getElementById('raw-time-' + sid);
+    const cardOut  = document.getElementById('card-output-' + sid);
+    const cardMet  = document.getElementById('card-metrics-' + sid);
+
+
+
+    if (outputEl) outputEl.innerHTML = formatLlmOutput(data.output);
+    if (tsEl)     tsEl.textContent     = new Date().toLocaleTimeString();
+    if (rtEl)     rtEl.textContent     = '⏱ ' + data.metrics.raw_time + 's inferenza';
+    if (cardOut)  cardOut.style.display = '';
+
+
+
+    renderMetrics(model.id, data.metrics);
+    if (cardMet) cardMet.style.display = '';
+
+
+
+    allResults[model.id] = data;
+    renderCompareRadar();
+
+
+
+  } catch (e) {
+    if (statusEl) statusEl.style.display = 'none';
+    const errEl = document.getElementById('error-' + sid);
+    if (errEl) { errEl.textContent = '⚠ Errore di rete: ' + e.message; errEl.style.display = ''; }
+  }
+}
+
+
+
+// ESECUZIONE PARALLELA DELLA GENERAZIONE PER TUTTI I MODELLI SELEZIONATI
+{% if has_api_key %}
+MODELS.forEach(m => generate(m));
+{% endif %}
+
+</script>
+{% endblock %}

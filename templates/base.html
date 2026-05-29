@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fuxpleiner</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+
+  <header class="header">
+    <div class="header-brand">
+      <span class="header-badge">XAI</span>
+      <div>
+        <h1>Fuxpleiner</h1>
+        <span class="header-sub">Spiegazioni della semantica fuzzy, attraverso gli LLM</span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="stepper">
+    {# DEFINIZIONE DEI PASSAGGI DEL WORKFLOW #}
+    {% set steps = [
+      (1, 'step1', 'Scelta dei dati'),
+      (2, 'step2', 'Scelta della strategia'),
+      (3, 'step3', 'Scelta dei modelli'),
+      (4, 'step4', 'Risultati'),
+    ] %}
+
+    {# GENERAZIONE DINAMICA DEGLI STEP E CALCOLO DELLO STATO ATTIVO/COMPLETATO #}
+    {% for num, route, label in steps %}
+    <a href="{{ url_for(route) }}"
+       class="step-item {% if num == step %}active{% elif num < step %}done{% endif %}">
+      <span class="step-num">
+        {% if num < step %}✓{% else %}{{ num }}{% endif %}
+      </span>
+      <span class="step-label">{{ label }}</span>
+    </a>
+
+    {# AGGIUNTA DEL CONNETTORE GRAFICO TRA GLI STEP, ESCLUSO L'ULTIMO ELEMENTO #}
+    {% if not loop.last %}
+    <span class="step-connector"></span>
+    {% endif %}
+    {% endfor %}
+  </nav>
+
+  <main class="page-main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+  
+  {% block scripts %}{% endblock %}
+</body>
+</html>

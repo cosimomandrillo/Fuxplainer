@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-card">
+  <div class="page-card-header">
+    <h2>Selezione dei Modelli</h2>
+    <p class="page-card-sub">Scegli uno o più LLM da interrogare tramite Groq. I risultati verranno mostrati affiancati in schede dedicate.</p>
+  </div>
+
+  <form method="POST" action="{{ url_for('step3_post') }}">
+
+    <div class="form-section">
+      <p class="section-label">Modelli Disponibili</p>
+
+      <div class="model-toolbar">
+        <button type="button" class="btn-ghost" id="select-all">Seleziona Tutti</button>
+        <button type="button" class="btn-ghost" id="deselect-all">Deseleziona Tutti</button>
+        <span class="model-count" id="model-count">{{ selected_models | length }} selezionati</span>
+      </div>
+
+      <div class="model-grid">
+        {% for m in models %}
+        <label class="model-check {% if m.id in selected_models %}active{% endif %}"
+               for="model_{{ loop.index }}">
+          <input type="checkbox" name="models" id="model_{{ loop.index }}"
+                 value="{{ m.id }}"
+                 {% if m.id in selected_models %}checked{% endif %} />
+          <span class="mc-check-icon">✓</span>
+          <span class="mc-label">{{ m.label }}</span>
+          <span class="mc-id">{{ m.id }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="form-actions two-col">
+      <a href="{{ url_for('step2') }}" class="btn-secondary">‹ Indietro</a>
+      <button type="submit" class="btn-primary" id="run-btn">Avvia <span class="btn-arrow"></span></button>
+    </div>
+
+  </form>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  // SELEZIONE ELEMENTI PRINCIPALI
+  const checkboxes = document.querySelectorAll('input[name="models"]');
+  const labels     = document.querySelectorAll('.model-check');
+  const counter    = document.getElementById('model-count');
+
+  // AGGIORNAMENTO DINAMICO DEL CONTATORE DEI MODELLI SELEZIONATI
+  function updateCount() {
+    const n = [...checkboxes].filter(c => c.checked).length;
+    counter.textContent = n + ' selezionati';
+  }
+
+  // MONITORAGGIO DEI CAMBIAMENTI SULLE SINGOLE CHECKBOX DI GRIGLIA
+  checkboxes.forEach((cb, i) => {
+    cb.addEventListener('change', () => {
+      labels[i].classList.toggle('active', cb.checked);
+      updateCount();
+    });
+  });
+
+  // PULSANTE PER SELEZIONARE TUTTI I MODELLI CONTEMPORANEAMENTE
+  document.getElementById('select-all').addEventListener('click', () => {
+    checkboxes.forEach((cb, i) => { cb.checked = true; labels[i].classList.add('active'); });
+    updateCount();
+  });
+
+  // PULSANTE PER DESELEZIONARE TUTTI I MODELLI CONTEMPORANEAMENTE
+  document.getElementById('deselect-all').addEventListener('click', () => {
+    checkboxes.forEach((cb, i) => { cb.checked = false; labels[i].classList.remove('active'); });
+    updateCount();
+  });
+</script>
+{% endblock %}

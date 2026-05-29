@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-card">
+  <div class="page-card-header">
+    <h2>Caricamento Dati</h2>
+    <p class="page-card-sub">Carica uno o più file CSV contenenti le regole fuzzy. È obbligatorio fornire le regole per poter procedere con l'esperimento.</p>
+  </div>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{ category }} mx-4 mt-3" role="alert">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  {% if session.get('fetch_error') %}
+  <div class="alert alert-danger mx-4 mt-3" role="alert" id="fetch-error-banner">
+    ⚠ {{ session.pop('fetch_error') }}
+  </div>
+  {% endif %}
+
+  <div class="error-box" id="validation-error" style="display: none; margin: 16px 20px -4px 20px;"></div>
+
+  <div class="form-section highlight-section" id="nmf-section">
+    <p class="section-label">🔗 Importazione Rapida da NMF Webapp</p>
+    <label>
+      Se hai già generato le spiegazioni fuzzy in <strong>nmf-webapp</strong> (<code>http://localhost:5000</code>), 
+      puoi sincronizzarle direttamente qui senza dover caricare manualmente un file CSV.
+    </label>
+    
+    <div class="model-toolbar" style="margin-top: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+      <button type="button" id="fetch-from-nmf-btn" class="btn-primary">
+        Sincronizza Regole
+      </button>
+      <span class="model-count" id="fetch-nmf-status" style="display: none;"></span>
+    </div>
+  </div>
+
+  <form method="POST" action="{{ url_for('step1_post') }}" enctype="multipart/form-data" autocomplete="off" id="rules-form">
+
+    <div class="form-section" id="csv-upload-section">
+      <p class="section-label">Caricamento CSV</p>
+      <label id="dropzone-label">Trascina o seleziona i file delle regole (Obbligatorio)</label>
+      <div class="dropzone" id="dropzone">
+        <div class="dropzone-icon" id="dropzone-icon">📂</div>
+        <p id="dropzone-text">Rilascia i file CSV qui, oppure <label for="csv_files" class="dz-link" id="dz-browse-link">sfoglia i file</label></p>
+        <input type="file" id="csv_files" name="csv_files" multiple accept=".csv" class="dz-input" />
+        <p class="field-hint" id="dz-filenames">Ogni riga presente nel CSV verrà convertita in una regola.</p>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <p class="section-label">Regole Fuzzy</p>
+      <label for="rules">Regole Caricate <span class="badge-optional">Modificabile</span></label>
+      <textarea id="rules" name="rules" rows="12" autocomplete="off"
+                placeholder="Carica un file CSV o usa l'importazione rapida qui sopra per popolare quest'area con le regole obbligatorie..."></textarea>
+      <p class="field-hint">
+        Le modifiche effettuate in questa casella sovrascriveranno i dati originali. L'esperimento utilizzerà esattamente il testo visualizzato.
+      </p>
+      <div style="display: flex; gap: 8px; margin-top: 8px;">
+        <button type="button" class="btn-ghost btn-sm" id="btn-clear-rules" style="color: #dc2626; display: none;">✕ Rimuovi regole sincronizzate</button>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn-primary">
+        Continua → Scegli Strategia <span class="btn-arrow">›</span>
+      </button>
+    </div>
+
+  </form>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  // SELEZIONE DEGLI ELEMENTI PRINCIPALI
+  const form        = document.getElementById("rules-form");
+  const dz          = document.getElementById("dropzone");
+  const input       = document.getElementById("csv_files");
+  const label       = document.getElementById("dz-filenames");
+  const textarea    = document.getElementById("rules");
+  const errorBox    = document.getElementById("validation-error");
+  
+  const fetchBtn    = document.getElementById("fetch-from-nmf-btn");
+  const fetchStatus = document.getElementById("fetch-nmf-status");
+  const clearRulesBtn = document.getElementById("btn-clear-rules");
+  const dzBrowseLink = document.getElementById("dz-browse-link");
+
+  let isNmfSynchronized = false;
+
+  // RESET COMPLETO DELLO STATO DELLA PAGINA AI SUCCESSIVI ACCESSI/RICARICAMENTI
+  window.addEventListener('pageshow', () => {
+    resetFormState();
+  });
+
+  // FUNZIONE PER RESETTARE IL FORM ALLO STATO INIZIALE
+  function resetFormState() {
+    input.value = "";
+    textarea.value = "";
+    isNmfSynchronized = false;
+    
+    // RIPRISTINO STATO INTERFACCIA DROPZONE
+    dz.classList.remove("has-files");
+    dz.style.opacity = "1";
+    dz.style.pointerEvents = "auto";
+    dz.style.cursor = "pointer";
+    input.disabled = false;
+    if(dzBrowseLink) dzBrowseLink.style.pointerEvents = "auto";
+    
+    textarea.style.borderColor = "";
+    errorBox.style.display = "none";
+    label.textContent = "Ogni riga presente nel CSV verrà considerata una regola";
+    
+    // RIPRISTINO STATO INTERFACCIA COMPONENTI NMF
+    fetchStatus.style.display = "none";
+    clearRulesBtn.style.display = "none";
+    fetchBtn.disabled = false;
+  }
+
+  // PARSING DEL TESTO CSV CONSTRUTTO PER ESTRARRE RIGHE PULITE SENZA VIRGOLETTE
+  function parseCSV(text) {
+    const lines = [];
+    const rows = text.split(/\r?\n/);
+    rows.forEach(row => {
+      const cells = row.match(/("(?:[^"]|"")*"|[^,]*)/g) || [];
+      const cleaned = cells
+        .map(c => c.replace(/^"|"$/g, '').replace(/""/g, '"').trim())
+        .filter(c => c.length > 0);
+      if (cleaned.length > 0) {
+        lines.push(cleaned.join(' '));
+      }
+    });
+    return lines.filter(l => l.length > 0);
+  }
+
+  // LETTURA DEI FILE CARICATI E INSERIMENTO NELLA TEXT-BOX
+  async function loadFilesIntoTextarea(files) {
+    if (isNmfSynchronized) return;
+    const allLines = [];
+    for (const file of files) {
+      if (!file.name.endsWith('.csv')) continue;
+      const text = await file.text();
+      const lines = parseCSV(text);
+      allLines.push(...lines);
+    }
+    if (allLines.length > 0) {
+      textarea.value = allLines.join('\n');
+      textarea.style.borderColor = "";
+      errorBox.style.display = "none";
+    }
+  }
+
+  // MONITORAGGIO AGGIORNAMENTI SULL'INPUT FILE NATIVO (SFOGLIA)
+  input.addEventListener("change", async () => {
+    if (isNmfSynchronized) return;
+    const files = [...input.files];
+    const names = files.map(f => f.name).join(", ");
+    label.textContent = names || "Ogni riga presente nel CSV verrà considerata una regola";
+    if (names) {
+      dz.classList.add("has-files");
+    } else {
+      dz.classList.remove("has-files");
+    }
+    await loadFilesIntoTextarea(files);
+  });
+
+  // GESTIONE EVENTI DRAG & DROP
+  dz.addEventListener("dragover", e => {
+    e.preventDefault();
+    if (isNmfSynchronized) return;
+    dz.classList.add("drag-over");
+  });
+
+  // GESTIONE EVENTO DRAG LEAVE DALLA DROPZONE
+  dz.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
+
+  // GESTIONE EVENTO DROP DEI FILE SULLA DROPZONE
+  dz.addEventListener("drop", async e => {
+    e.preventDefault();
+    if (isNmfSynchronized) return;
+    dz.classList.remove("drag-over");
+    
+    const dt = e.dataTransfer;
+    input.files = dt.files;
+    
+    const files = [...dt.files];
+    const names = files.map(f => f.name).join(", ");
+    label.textContent = names || "Ogni riga presente nel CSV verrà considerata una regola";
+    if (names) {
+      dz.classList.add("has-files");
+    } else {
+      dz.classList.remove("has-files");
+    }
+    await loadFilesIntoTextarea(files);
+  });
+
+  // FUNZIONE PER RENDERE LE REGOLE OBBLIGATORIE
+  form.addEventListener("submit", (e) => {
+    if (!textarea.value.trim()) {
+      e.preventDefault();
+      
+      errorBox.textContent = "⚠ Errore: È obbligatorio caricare un file CSV o importare le regole da NMF Webapp per continuare.";
+      errorBox.style.display = "block";
+      
+      textarea.style.borderColor = "var(--danger, #dc2626)";
+      textarea.focus();
+    }
+  });
+
+  // RIMOZIONE DINAMICA DEGLI ERRORI DOPO CHE SI DIGITA NELLA TEXT-BOX
+  textarea.addEventListener("input", () => {
+    if (textarea.value.trim()) {
+      textarea.style.borderColor = "";
+      errorBox.style.display = "none";
+    }
+  });
+
+  // AGGIORNAMENTO GRAFICO DELLO STATO DELLA SINCRONIZZAZIONE NMF
+  function setNmfStatus(text, isError = false) {
+    fetchStatus.style.display = "inline";
+    fetchStatus.textContent = text;
+    if (isError) {
+      fetchStatus.style.color = "#dc2626";
+    } else {
+      fetchStatus.style.color = "";
+    }
+  }
+
+  // GESTIONE CHIAMATA API DI SINCRONIZZAZIONE ASINCRONA DA NMF
+  fetchBtn.addEventListener("click", async () => {
+    fetchBtn.disabled = true;
+    setNmfStatus("Contatto nmf-webapp in corso...");
+
+    try {
+      const res = await fetch("/fetch-from-nmf", {
+        headers: { "Accept": "application/json" }
+      });
+      const data = await res.json();
+
+      if (data.ok) {
+        // AGGIORNAMENTO DELLA TEXTAREA CON LE REGOLE RICEVUTE
+        textarea.value = data.rules || "";
+        textarea.style.borderColor = "";
+        errorBox.style.display = "none";
+        
+        setNmfStatus(`Sincronizzate ${data.count} regole!`);
+        
+        // DISATTIVAZIONE E OSCURAMENTO BLOCCO INPUT CSV SE REGOLE CARICATE CORRETTAMENTE
+        isNmfSynchronized = true;
+        input.value = "";
+        input.disabled = true;
+        dz.classList.remove("has-files");
+        dz.style.opacity = "0.4";
+        dz.style.pointerEvents = "none";
+        if(dzBrowseLink) dzBrowseLink.style.pointerEvents = "none";
+        label.textContent = "Caricamento da file disabilitato (regole sincronizzate via Webapp)";
+        
+        clearRulesBtn.style.display = "inline-block";
+      } else {
+        setNmfStatus(`⚠ ${data.error}`, true);
+        fetchBtn.disabled = false;
+      }
+    } catch (err) {
+      setNmfStatus("⚠ Errore di rete: impossibile raggiungere il server.", true);
+      fetchBtn.disabled = false;
+    }
+  });
+
+  // PULIZIA DEI DATI SINCRONIZZATI PER ABILITARE DI NUOVO IL CARICAMENTO CSV
+  clearRulesBtn.addEventListener("click", () => {
+    resetFormState();
+  });
+</script>
+{% endblock %}

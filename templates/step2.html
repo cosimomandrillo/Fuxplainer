@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-card">
+  <div class="page-card-header">
+    <h2>Scelta della strategia</h2>
+    <p class="page-card-sub">Scegli come istruire l'LLM. Le strategie basate su Figure sbloccano un selettore dedicato alle multiple personalità.</p>
+  </div>
+
+  <form method="POST" action="{{ url_for('step2_post') }}">
+
+    <div class="form-section">
+      <p class="section-label">Strategia</p>
+      <div class="strategy-grid" id="strategy-grid">
+        {% for s in strategies %}
+        <label class="strategy-pill {% if selected_strategy == s.id %}active{% endif %}"
+               for="strat_{{ s.id }}">
+          <input type="radio" name="strategy" id="strat_{{ s.id }}" value="{{ s.id }}"
+                 {% if selected_strategy == s.id %}checked{% endif %} />
+          <span class="sp-id">{{ s.id }}</span>
+          <span class="sp-name">{{ s.short }}</span>
+          <span class="sp-desc">{{ s.desc }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="form-section" id="persona-section"
+         style="{{ 'display:none' if selected_strategy == 'P1' else '' }}">
+      <p class="section-label">Figura Esperta</p>
+      
+      <input type="hidden" name="persona" id="persona" value="{{ selected_persona or personas[0].id }}">
+
+      <div class="persona-cards" id="persona-cards">
+        {% for p in personas %}
+        <div class="persona-card {% if selected_persona == p.id %}active{% endif %}"
+             data-id="{{ p.id }}">
+          <div class="pc-label">{{ p.label }}</div>
+          <div class="pc-desc">{{ p.desc }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="form-section" id="prompt-preview-section">
+      <p class="section-label">
+        Anteprima Prompt
+        <span class="badge-optional">modificabile</span>
+        <span class="prompt-sync-badge" id="sync-badge" style="display:none">
+          <span class="sync-dot"></span> aggiornato automaticamente
+        </span>
+      </p>
+      <label for="prompt_preview">
+        Il prompt che verrà inviato all'LLM — puoi modificarlo direttamente prima di procedere.
+      </label>
+      <textarea id="prompt_preview" name="prompt_preview" rows="10"
+                placeholder="Caricamento anteprima del prompt…">{{ prompt_preview }}</textarea>
+      <p class="field-hint">
+        Le modifiche effettuate qui sovrascriveranno il prompt generato automaticamente. L'LLM riceverà esattamente il testo che vedi.
+      </p>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button type="button" class="btn-ghost btn-sm" id="btn-regenerate">↺ Rigenera dalle impostazioni</button>
+        <button type="button" class="btn-ghost btn-sm" id="btn-clear-override" style="color:#dc2626">✕ Annulla modifiche</button>
+      </div>
+    </div>
+
+    <div class="form-actions two-col">
+      <a href="{{ url_for('step1') }}" class="btn-secondary">‹ Indietro</a>
+      <button type="submit" class="btn-primary">Continua → Scelta dei modelli <span class="btn-arrow">›</span></button>
+    </div>
+
+  </form>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+  // SELEZIONE ELEMENTI
+  const radios   = document.querySelectorAll('input[name="strategy"]');
+  const pills    = document.querySelectorAll('.strategy-pill');
+  const section  = document.getElementById('persona-section');
+  const select   = document.getElementById('persona'); 
+  const pcards   = document.querySelectorAll('.persona-card');
+  const previewTA = document.getElementById('prompt_preview');
+  const syncBadge = document.getElementById('sync-badge');
+
+  let userEditedPrompt = false;
+  let fetchTimer = null;
+
+  // FUNZIONE PER MOSTRARE O NASCONDERE AUTOMATICAMENTE LE PERSONAS SE NON E' STATO SELEZIONATO IL PERSONA PATTERN
+  function updatePersonaSection() {
+    const val = document.querySelector('input[name="strategy"]:checked')?.value;
+    section.style.display = (val === 'P2' || val === 'P3') ? '' : 'none';
+  }
+
+  // CHIAMATA API PER RECUPERARE IL PROMPT GENERATO SUL SERVER
+  async function fetchPromptPreview() {
+    const strategy = document.querySelector('input[name="strategy"]:checked')?.value || 'P1';
+    const persona  = select.value;
+
+    try {
+      const resp = await fetch('/api/prompt-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategy, persona }),
+      });
+      const data = await resp.json();
+      previewTA.value = data.prompt || '';
+      
+      // MOSTRA E NASCONDE IL BADGE DI AVVENUTA SINCRONIZZAZIONE
+      syncBadge.style.display = '';
+      setTimeout(() => { syncBadge.style.display = 'none'; }, 2000);
+    } catch (e) {
+      console.warn('Recupero anteprima prompt fallito:', e);
+    }
+  }
+
+  // DEBOUNCE PER EVITARE CHIAMATE API MULTIPLE E CONSECUTIVE
+  function schedulePreviewUpdate() {
+    if (userEditedPrompt) return;  
+    clearTimeout(fetchTimer);
+    fetchTimer = setTimeout(fetchPromptPreview, 250);
+  }
+
+  // EVENTI DI CAMBIO STRATEGIA (RADIO BOTTONI)
+  radios.forEach(r => {
+    r.addEventListener('change', () => {
+      pills.forEach(p => p.classList.remove('active'));
+      r.closest('.strategy-pill').classList.add('active');
+      updatePersonaSection();
+      schedulePreviewUpdate();
+    });
+  });
+
+  // GESTIONE DEL CLICK SULLE CARTE PERSONAGGIO E AGGIORNAMENTO INPUT HIDDEN
+  pcards.forEach(c => {
+    c.addEventListener('click', () => {
+      select.value = c.dataset.id; 
+      pcards.forEach(x => x.classList.remove('active'));
+      c.classList.add('active'); 
+      schedulePreviewUpdate();
+    });
+  });
+
+  // BLOCCO DEGLI AGGIORNAMENTI AUTOMATICI SE L'UTENTE MODIFICA IL TESTO MANUALMENTE
+  previewTA.addEventListener('input', () => {
+    userEditedPrompt = true;
+  });
+
+  // PULSANTE RIGENERA: FORZA IL RIPRISTINO DEL PROMPT AUTOMATICO
+  document.getElementById('btn-regenerate').addEventListener('click', () => {
+    userEditedPrompt = false;
+    fetchPromptPreview();
+  });
+
+  // PULSANTE ANNULLA MODIFICHE: AZZERA E RICARICA DA CONFIGURAZIONE
+  document.getElementById('btn-clear-override').addEventListener('click', () => {
+    userEditedPrompt = false;
+    previewTA.value = '';
+    fetchPromptPreview();
+  });
+
+  // INIZIALIZZAZIONE STATO INTERFACCIA UTENTE ALL'AVVIO
+  updatePersonaSection();
+
+  // CARICAMENTO INIZIALE DEL PROMPT SE IL CAMPO RISULTA VUOTO
+  if (!previewTA.value.trim()) {
+    fetchPromptPreview();
+  }
+</script>
+{% endblock %}

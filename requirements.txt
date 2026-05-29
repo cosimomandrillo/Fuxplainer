@@ -1,0 +1,8 @@
+flask
+requests
+textstat
+scikit-learn
+pandas
+sentence-transformers
+spacy
+python-dotenv
